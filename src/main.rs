@@ -25,6 +25,11 @@ impl<'a> ApplicationHandler for App<'a> {
         self.window = Some(window.clone());
         self.renderer = Some(render::Renderer::new(window.clone()));
 
+        // test
+        if let Some(renderer) = &mut self.renderer {
+            renderer.load_texture(String::from("cat.png"));
+        }
+
         // Request redraw if window exists
         if let Some(window) = &self.window {
             window.request_redraw();

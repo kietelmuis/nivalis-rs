@@ -1,24 +1,27 @@
 use image::GenericImageView;
 
-struct Rectangle {
+pub struct Rectangle {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
 }
 
-struct Texture {
+pub struct Texture {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     sampler: wgpu::Sampler,
 }
 
 impl Texture {
-    fn from_name(
+    pub fn from_name(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         texture_name: &str,
         label: &str,
     ) -> Self {
-        let image = image::open(format!("../assets/textures/{}", texture_name)).unwrap();
+        let file = format!("assets/textures/{}", texture_name);
+        println!("[l0] loading texture at {}", file);
+
+        let image = image::open(file).unwrap();
         let rgba = image.to_rgba8();
         let dimensions = image.dimensions();
 

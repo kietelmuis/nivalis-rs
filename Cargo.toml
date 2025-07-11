@@ -10,3 +10,4 @@ image = "0.25.6"
 pollster = "0.4.0"
 wgpu = "25.0.2"
 winit = "0.30.11"
+uuid = { version = "1.17", features = ["v4"] }

@@ -1,16 +1,20 @@
 use std::sync::Arc;
-
+use uuid::Uuid;
 use winit::window::Window;
 
-mod assets;
-mod entity;
-mod world;
+pub mod assets;
+pub mod entity;
+pub mod world;
+
+use assets::Texture;
 
 pub struct Renderer<'a> {
     surface: Option<wgpu::Surface<'a>>,
     device: Option<wgpu::Device>,
     queue: Option<wgpu::Queue>,
+    window: Option<Arc<Window>>,
     config: Option<wgpu::SurfaceConfiguration>,
+    render_pipeline: Option<wgpu::RenderPipeline>,
 }
 
 struct FrameContext {
@@ -65,6 +69,8 @@ impl<'a> Renderer<'a> {
             device: Some(device),
             queue: Some(queue),
             config: Some(config),
+            window: Some(window),
+            render_pipeline: None,
         }
     }
 
@@ -77,7 +83,20 @@ impl<'a> Renderer<'a> {
         self.end_frame(context);
     }
 
+    pub fn load_texture(&mut self, texture_name: String) -> Texture {
+        let id = Uuid::new_v4().to_string();
+        println!("[l1] creating texture {}", id);
+
+        Texture::from_name(
+            &self.device.as_ref().unwrap(),
+            &self.queue.as_ref().unwrap(),
+            texture_name.as_str(),
+            id.as_str(),
+        )
+    }
+
     fn begin_frame(&mut self) -> Option<FrameContext> {
+        println!("[l1] begin frame");
         let (surface, device) = match (&mut self.surface, &self.device) {
             (Some(s), Some(d)) => (s, d),
             _ => return None,
@@ -107,6 +126,7 @@ impl<'a> Renderer<'a> {
     }
 
     fn end_frame(&mut self, context: FrameContext) {
+        println!("[l1] end frame");
         self.queue
             .as_ref()
             .unwrap()
