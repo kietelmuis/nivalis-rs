@@ -1,56 +1,120 @@
-use crate::App;
+use std::sync::Arc;
 
-pub fn draw_blue(app: &mut App) {
-    if let (Some(surface), Some(device), Some(queue)) = (&app.surface, &app.device, &app.queue) {
-        // Configure the surface
-        let size = app.window.as_ref().unwrap().inner_size();
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
-            width: size.width,
-            height: size.height,
-            present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: wgpu::CompositeAlphaMode::Auto,
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
+use winit::window::Window;
+
+mod assets;
+mod entity;
+mod world;
+
+pub struct Renderer<'a> {
+    surface: Option<wgpu::Surface<'a>>,
+    device: Option<wgpu::Device>,
+    queue: Option<wgpu::Queue>,
+    config: Option<wgpu::SurfaceConfiguration>,
+}
+
+struct FrameContext {
+    frame: wgpu::SurfaceTexture,
+    view: wgpu::TextureView,
+    encoder: wgpu::CommandEncoder,
+}
+
+impl<'a> Renderer<'a> {
+    pub fn new(window: Arc<Window>) -> Self {
+        let instance = wgpu::Instance::default();
+        let surface = instance.create_surface(window.clone()).unwrap();
+
+        // choose gpu
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            force_fallback_adapter: false,
+            compatible_surface: Some(&surface),
+        }))
+        .unwrap();
+
+        // show gpu info
+        let info = adapter.get_info();
+        println!(
+            "{} on {} {} with {}",
+            info.name, info.driver, info.driver_info, info.backend
+        );
+
+        // connect to gpu
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: None,
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::default(),
+        }))
+        .unwrap();
+
+        // create surface configuration
+        let size = window.clone().inner_size();
+        println!("window size is {} x {}", size.width, size.height);
+
+        let mut config = surface
+            .get_default_config(&adapter, size.width, size.height)
+            .unwrap();
+        config.present_mode = wgpu::PresentMode::Mailbox;
+
         surface.configure(&device, &config);
 
-        // Get the current frame
-        let frame = surface.get_current_texture().unwrap();
+        Renderer {
+            surface: Some(surface),
+            device: Some(device),
+            queue: Some(queue),
+            config: Some(config),
+        }
+    }
+
+    pub fn handle_redraw(&mut self) {
+        let context = self.begin_frame().unwrap();
+
+        // self.render_scene(&context);
+        // self.render_ui(&context);
+
+        self.end_frame(context);
+    }
+
+    fn begin_frame(&mut self) -> Option<FrameContext> {
+        let (surface, device) = match (&mut self.surface, &self.device) {
+            (Some(s), Some(d)) => (s, d),
+            _ => return None,
+        };
+
+        let frame = match surface.get_current_texture() {
+            Ok(frame) => frame,
+            Err(e) => {
+                eprintln!("Failed to acquire next swap chain texture: {:?}", e);
+                return None;
+            }
+        };
+
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Create command encoder
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder"),
+        });
 
-        // Clear the screen with blue color
-        {
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-        }
+        Some(FrameContext {
+            frame,
+            view,
+            encoder,
+        })
+    }
 
-        // Submit and present
-        queue.submit(std::iter::once(encoder.finish()));
-        frame.present();
+    fn end_frame(&mut self, context: FrameContext) {
+        self.queue
+            .as_ref()
+            .unwrap()
+            .submit(std::iter::once(context.encoder.finish()));
+
+        context.frame.present();
+
+        // Note: frame, view, and encoder are consumed when this function returns
+        // as they are part of the FrameContext struct which is moved into this function
     }
 }
