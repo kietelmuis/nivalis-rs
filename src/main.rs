@@ -1,5 +1,4 @@
 use std::sync::Arc;
-
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -7,18 +6,15 @@ use winit::{
     window::{Window, WindowAttributes, WindowId},
 };
 
-#[derive(Default)]
-struct App {
-    window: Option<Arc<Window>>,
-    surface: Option<wgpu::Surface<'static>>,
-    device: Option<wgpu::Device>,
-    queue: Option<wgpu::Queue>,
-    config: Option<wgpu::SurfaceConfiguration>,
-}
-
 mod render;
 
-impl ApplicationHandler for App {
+#[derive(Default)]
+struct App<'a> {
+    window: Option<Arc<Window>>,
+    renderer: Option<render::Renderer<'a>>,
+}
+
+impl<'a> ApplicationHandler for App<'a> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window = Arc::new(
             event_loop
@@ -26,39 +22,10 @@ impl ApplicationHandler for App {
                 .unwrap(),
         );
 
-        let instance = wgpu::Instance::default();
-        let surface = instance.create_surface(window.clone()).unwrap();
+        self.window = Some(window.clone());
+        self.renderer = Some(render::Renderer::new(window.clone()));
 
-        // choose gpu
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            compatible_surface: Some(&surface),
-        }))
-        .unwrap();
-
-        // show gpu info
-        let info = adapter.get_info();
-        println!(
-            "using {} on {} {} with backend {}",
-            info.name, info.driver, info.driver_info, info.backend
-        );
-
-        // connect to gpu
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: None,
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::default(),
-        }))
-        .unwrap();
-
-        self.surface = Some(surface);
-        self.device = Some(device);
-        self.queue = Some(queue);
-        self.window = Some(window);
-
+        // Request redraw if window exists
         if let Some(window) = &self.window {
             window.request_redraw();
         }
@@ -71,8 +38,9 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                println!("redrawing window");
-                render::draw_blue(self);
+                if let Some(renderer) = &mut self.renderer {
+                    renderer.handle_redraw();
+                }
             }
             _ => {}
         }
@@ -86,6 +54,6 @@ fn main() {
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    let mut app = App::default();
+    let mut app = App::<'static>::default();
     _ = event_loop.run_app(&mut app);
 }
