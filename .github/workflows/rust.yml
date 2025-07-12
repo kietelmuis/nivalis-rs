@@ -1,29 +1,36 @@
 name: Rust
 
-on:
-  push:
-    branches: ["main"]
-  pull_request:
-    branches: ["main"]
+on: [push, pull_request]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
       - name: Build
         run: cargo build --release
-      - name: List build artifacts
+
+      - name: List build artifacts (Unix)
+        if: matrix.os != 'windows-latest'
         run: find target/release -type f -executable -not -path "*/deps/*" | grep -v "\.d$"
+
+      - name: List build artifacts (Windows)
+        if: matrix.os == 'windows-latest'
+        run: Get-ChildItem -Path target/release -Recurse -File | Where-Object { $_.Name -match "^nivalis.*\.exe$" -and $_.DirectoryName -notmatch "deps$" }
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: nivalis
+          name: nivalis-${{ matrix.os }}
           path: |
             target/release/nivalis*
+            target/release/nivalis*.exe
             !target/release/*.d
             !target/release/deps/
