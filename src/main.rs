@@ -29,6 +29,7 @@ impl<'a> ApplicationHandler for App<'a> {
         // test
         if let Some(renderer) = &mut self.renderer {
             renderer.load_texture(String::from("cat.png"));
+            renderer.add_text("hallo", 15.0, 1.15);
         }
 
         // Request redraw if window exists
@@ -42,6 +43,11 @@ impl<'a> ApplicationHandler for App<'a> {
             WindowEvent::CloseRequested => {
                 println!("stopping app");
                 event_loop.exit();
+            }
+            WindowEvent::Resized(size) => {
+                if let Some(renderer) = &mut self.renderer {
+                    renderer.handle_resize(size);
+                }
             }
             WindowEvent::RedrawRequested => {
                 if let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
