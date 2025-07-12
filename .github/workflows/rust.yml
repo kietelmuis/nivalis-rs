@@ -8,22 +8,32 @@ env:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+
+      - run: rustup toolchain install stable --profile minimal
+
       - name: Build
         run: cargo build --release
 
-      - name: List build artifacts (Unix)
-        if: matrix.os != 'windows-latest'
+      - name: List build artifacts (Linux)
+        if: matrix.os == 'ubuntu-latest'
         run: find target/release -type f -executable -not -path "*/deps/*" | grep -v "\.d$"
+
+      - name: List build artifacts (macOS)
+        if: matrix.os == 'macos-latest'
+        run: find target/release -type f -perm +111 -not -path "*/deps/*" | grep -v "\.d$"
 
       - name: List build artifacts (Windows)
         if: matrix.os == 'windows-latest'
-        run: Get-ChildItem -Path target/release -Recurse -File | Where-Object { $_.Name -match "^nivalis.*\.exe$" -and $_.DirectoryName -notmatch "deps$" }
+        shell: cmd
+        run: dir target\release\*.exe /b /s | findstr /v "\\deps\\"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
