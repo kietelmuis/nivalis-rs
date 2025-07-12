@@ -20,7 +20,7 @@ jobs:
       - name: List build artifacts
         run: find target/release -type f -executable -not -path "*/deps/*" | grep -v "\.d$"
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: nivalis
           path: |
