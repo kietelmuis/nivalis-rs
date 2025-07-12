@@ -1,3 +1,4 @@
+use rand::Rng;
 use std::sync::Arc;
 use uuid::Uuid;
 use winit::window::Window;
@@ -6,6 +7,8 @@ pub mod assets;
 pub mod entity;
 pub mod world;
 
+use crate::util;
+use crate::util::ext::ColorExtensions;
 use assets::Texture;
 
 pub struct Renderer<'a> {
@@ -15,6 +18,12 @@ pub struct Renderer<'a> {
     window: Option<Arc<Window>>,
     config: Option<wgpu::SurfaceConfiguration>,
     render_pipeline: Option<wgpu::RenderPipeline>,
+
+    rng: rand::rngs::ThreadRng,
+
+    current_color: wgpu::Color,
+    target_color: wgpu::Color,
+    transition_speed: f32,
 }
 
 struct FrameContext {
@@ -64,6 +73,25 @@ impl<'a> Renderer<'a> {
 
         surface.configure(&device, &config);
 
+        let mut rng = rand::rng();
+
+        let target = wgpu::Color {
+            r: rng.random_range(0.0..1.0),
+            g: rng.random_range(0.0..1.0),
+            b: rng.random_range(0.0..1.0),
+            a: 1.0,
+        };
+
+        let current = wgpu::Color {
+            r: rng.random_range(0.0..1.0),
+            g: rng.random_range(0.0..1.0),
+            b: rng.random_range(0.0..1.0),
+            a: 1.0,
+        };
+
+        println!("{:?}", current);
+        println!("{:?}", target);
+
         Renderer {
             surface: Some(surface),
             device: Some(device),
@@ -71,12 +99,18 @@ impl<'a> Renderer<'a> {
             config: Some(config),
             window: Some(window),
             render_pipeline: None,
+
+            rng: rng,
+            current_color: current,
+            target_color: target,
+            transition_speed: 0.001,
         }
     }
 
     pub fn handle_redraw(&mut self) {
-        let context = self.begin_frame().unwrap();
+        let mut context = self.begin_frame().unwrap();
 
+        self.display_rand(&mut context);
         // self.render_scene(&context);
         // self.render_ui(&context);
 
@@ -95,6 +129,37 @@ impl<'a> Renderer<'a> {
         )
     }
 
+    fn display_rand(&mut self, context: &mut FrameContext) {
+        println!("{:?}", self.current_color);
+        println!("{:?}", self.target_color);
+
+        self.current_color = self
+            .current_color
+            .lerp(&self.target_color, self.transition_speed);
+
+        context
+            .encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &context.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(self.current_color),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+        if self.current_color.is_near(&self.target_color, 0.001) {
+            println!("reached target");
+            self.target_color = wgpu::Color::random(&mut self.rng);
+        }
+    }
+
     fn begin_frame(&mut self) -> Option<FrameContext> {
         println!("[l1] begin frame");
         let (surface, device) = match (&mut self.surface, &self.device) {
@@ -110,11 +175,13 @@ impl<'a> Renderer<'a> {
             }
         };
 
+        // interpertatie van texture
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        // enqueue texture bij gpu encoder
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
 

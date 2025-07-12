@@ -7,6 +7,7 @@ use winit::{
 };
 
 mod render;
+mod util;
 
 #[derive(Default)]
 struct App<'a> {
@@ -43,8 +44,9 @@ impl<'a> ApplicationHandler for App<'a> {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                if let Some(renderer) = &mut self.renderer {
+                if let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
                     renderer.handle_redraw();
+                    window.request_redraw();
                 }
             }
             _ => {}
@@ -55,7 +57,7 @@ impl<'a> ApplicationHandler for App<'a> {
 fn main() {
     env_logger::init();
 
-    // begin nieuwe frame na frame klaar
+    // begin nieuwe frame na input
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
 
