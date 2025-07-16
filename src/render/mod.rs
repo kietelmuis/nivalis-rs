@@ -231,9 +231,6 @@ impl<'a> Renderer<'a> {
         self.display_imgui(&mut context, dt_seconds);
         self.display_text(&mut context, dt_seconds);
 
-        // self.render_scene(&context, dt_seconds);
-        // self.render_ui(&context, dt_seconds);
-
         self.end_frame(context);
 
         Some(())
@@ -376,17 +373,19 @@ impl<'a> Renderer<'a> {
             return; // not ready
         };
 
+        // update imgui's dt time
         imgui
             .context
             .io_mut()
             .update_delta_time(Duration::from_secs_f32(dt_seconds));
 
+        // preparing frame
         imgui
             .platform
             .prepare_frame(imgui.context.io_mut(), &self.window)
             .expect("Failed to prepare frame");
-        let ui = imgui.context.frame();
 
+        let ui = imgui.context.frame();
         {
             let window = ui.window("Hello world");
             window
@@ -413,29 +412,27 @@ impl<'a> Renderer<'a> {
             ui.show_demo_window(&mut imgui.demo_open);
         }
 
-        let mut encoder: wgpu::CommandEncoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-
         if imgui.last_cursor != ui.mouse_cursor() {
             imgui.last_cursor = ui.mouse_cursor();
             imgui.platform.prepare_render(ui, &self.window);
         }
 
-        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: None,
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &context.view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(imgui.clear_color),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
+        let mut rpass = context
+            .encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &context.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(imgui.clear_color),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
 
         imgui
             .renderer
