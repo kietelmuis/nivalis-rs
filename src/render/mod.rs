@@ -1,10 +1,13 @@
+use assets::Texture;
 use glyphon::{Attrs, Cache, FontSystem, Metrics, SwashCache, TextArea, TextAtlas, TextBounds};
+use imgui::{Condition, MouseCursor};
+use imgui_winit_support::WinitPlatform;
 use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
-use wgpu::MultisampleState;
+use wgpu::{AdapterInfo, MultisampleState};
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
@@ -12,8 +15,17 @@ pub mod assets;
 pub mod entity;
 pub mod world;
 
-use crate::util::ext::ColorExtensions;
-use assets::Texture;
+mod modules;
+
+struct ImguiRenderer {
+    context: imgui::Context,
+    renderer: imgui_wgpu::Renderer,
+    platform: WinitPlatform,
+    clear_color: wgpu::Color,
+    demo_open: bool,
+    last_frame: Instant,
+    last_cursor: Option<MouseCursor>,
+}
 
 pub struct TextRenderer<'a> {
     physical_size: PhysicalSize<u32>,
@@ -33,10 +45,16 @@ pub struct Renderer<'a> {
     queue: wgpu::Queue,
     window: Arc<Window>,
     config: wgpu::SurfaceConfiguration,
-    render_pipeline: wgpu::RenderPipeline,
+    render_pipeline: Option<wgpu::RenderPipeline>,
+
+    pub adapter_info: AdapterInfo,
 
     // renderers
     text_renderer: TextRenderer<'a>,
+    imgui_renderer: Option<ImguiRenderer>,
+
+    loaded_textures: HashMap<String, assets::Texture>,
+    texture_id: Option<String>,
 
     // temp
     rng: rand::rngs::ThreadRng,
@@ -84,12 +102,6 @@ impl<'a> Renderer<'a> {
         }))
         .unwrap();
 
-        // load shader
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/basic.wgsl").into()),
-        });
-
         // create surface configuration
         let size = window.clone().inner_size();
         println!("window size is {} x {}", size.width, size.height);
@@ -126,7 +138,7 @@ impl<'a> Renderer<'a> {
         let scale_factor = window.clone().scale_factor() as f32;
 
         // kleuren randomizer
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let target = wgpu::Color {
             r: rng.random_range(0.0..1.0),
@@ -145,7 +157,7 @@ impl<'a> Renderer<'a> {
         println!("{:?}", current);
         println!("{:?}", target);
 
-        Renderer {
+        let mut renderer = Renderer {
             surface: surface,
             device: device,
             queue: queue,
@@ -153,6 +165,9 @@ impl<'a> Renderer<'a> {
             window: window,
             render_pipeline: None,
 
+            adapter_info: adapter.get_info(),
+
+            imgui_renderer: None,
             text_renderer: TextRenderer {
                 physical_size: size,
                 scale_factor: scale_factor,
@@ -162,30 +177,53 @@ impl<'a> Renderer<'a> {
                 viewport: viewport,
                 atlas: atlas,
                 renderer: text_renderer,
-                buffers: HashMap::<String, glyphon::Buffer>::new(),
+                buffers: HashMap::new(),
             },
+
+            loaded_textures: HashMap::new(),
+            texture_id: None,
 
             rng: rng,
             current_color: current,
             target_color: target,
-            transition_speed: 0.001,
+            transition_speed: 0.01,
 
             last_frame_time: None,
-            delta_time: Duration::from_secs(0),
-        }
+            delta_time: Duration::from_secs_f32(0.0),
+        };
+
+        renderer.create_pipeline();
+        renderer.create_imgui();
+        renderer
     }
 
     pub fn handle_resize(&mut self, size: PhysicalSize<u32>) {
+        if size.height == 0 || size.width == 0 {
+            return; // stop text adjustment if window size invalid
+        }
+
+        // adjust surface config width and height
         self.config.width = size.width;
         self.config.height = size.height;
         self.surface.configure(&self.device, &self.config);
         self.window.request_redraw();
 
+        // adjust text renderer's viewport to new surface config
+        self.text_renderer.viewport.update(
+            &self.queue,
+            glyphon::Resolution {
+                width: self.config.width,
+                height: self.config.height,
+            },
+        );
+
+        // adjust the text renderer's manual scale and size
         self.text_renderer.scale_factor = self.window.scale_factor() as f32;
         self.text_renderer.physical_size = size.cast();
 
         let logical_width = size.width as f32 / self.text_renderer.scale_factor;
 
+        // idk wtf
         for (_, b) in self.text_renderer.buffers.iter_mut() {
             b.set_size(
                 &mut self.text_renderer.font_system,
@@ -196,30 +234,41 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    pub fn handle_redraw(&mut self) {
-        let mut context = self.begin_frame().unwrap();
-
+    pub fn handle_redraw(&mut self) -> Option<()> {
+        let mut context = self.begin_frame()?;
         let dt_seconds = self.delta_time.as_secs_f32();
 
-        self.display_rand(&mut context, dt_seconds);
+        self.display_imgui(&mut context, dt_seconds);
         self.display_text(&mut context, dt_seconds);
 
         // self.render_scene(&context, dt_seconds);
         // self.render_ui(&context, dt_seconds);
 
         self.end_frame(context);
+
+        Some(())
     }
 
-    pub fn load_texture(&mut self, texture_name: String) -> Texture {
+    pub fn load_texture(&mut self, texture_name: String) -> String {
         let id = Uuid::new_v4().to_string();
-        println!("[l1] creating texture {}", id);
+        println!(
+            "[l1] registering texture id {} with name {}",
+            id, texture_name
+        );
 
-        Texture::from_name(
-            &self.device,
-            &self.queue,
-            texture_name.as_str(),
-            id.as_str(),
-        )
+        self.loaded_textures.insert(
+            id.clone(),
+            Texture::from_name(
+                &self.device,
+                &self.queue,
+                texture_name.as_str(),
+                id.as_str(),
+            ),
+        );
+
+        self.texture_id = Some(id.clone());
+
+        id
     }
 
     pub fn add_text(&mut self, text: &str, font_size: f32, line_height: f32) {
@@ -253,14 +302,6 @@ impl<'a> Renderer<'a> {
     }
 
     fn display_text(&mut self, context: &mut FrameContext, _dt_seconds: f32) {
-        self.text_renderer.viewport.update(
-            &self.queue,
-            glyphon::Resolution {
-                width: self.config.width,
-                height: self.config.height,
-            },
-        );
-
         let scale_factor = self.text_renderer.scale_factor;
 
         let left = 10.0 * scale_factor;
@@ -328,6 +369,7 @@ impl<'a> Renderer<'a> {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+        pass.set_pipeline(self.render_pipeline.as_ref().unwrap());
 
         self.text_renderer
             .renderer
@@ -339,70 +381,86 @@ impl<'a> Renderer<'a> {
             .unwrap();
     }
 
-    fn display_texture(&mut self, context: &mut FrameContext, dt_seconds: f32) {
-        println!("{:?}", self.current_color);
-        println!("{:?}", self.target_color);
+    fn display_imgui(&mut self, context: &mut FrameContext, dt_seconds: f32) {
+        let Some(imgui) = &mut self.imgui_renderer else {
+            return; // not ready
+        };
 
-        let speed = self.transition_speed * 60.0 * dt_seconds;
-        self.current_color = self.current_color.lerp(&self.target_color, speed);
+        imgui
+            .context
+            .io_mut()
+            .update_delta_time(Duration::from_secs_f32(dt_seconds));
 
-        let mut pass = context
-            .encoder
-            .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &context.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.current_color),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+        imgui
+            .platform
+            .prepare_frame(imgui.context.io_mut(), &self.window)
+            .expect("Failed to prepare frame");
+        let ui = imgui.context.frame();
 
-        if self.current_color.is_near(&self.target_color, 0.001) {
-            println!("reached target");
-            self.target_color = wgpu::Color::random(&mut self.rng);
+        {
+            let window = ui.window("Hello world");
+            window
+                .size([300.0, 100.0], Condition::FirstUseEver)
+                .build(|| {
+                    ui.text("Hello world!");
+                    ui.text("This...is...imgui-rs on WGPU!");
+                    ui.separator();
+                    let mouse_pos = ui.io().mouse_pos;
+                    ui.text(format!(
+                        "Mouse Position: ({:.1},{:.1})",
+                        mouse_pos[0], mouse_pos[1]
+                    ));
+                });
+
+            let window = ui.window("Hello too");
+            window
+                .size([400.0, 200.0], Condition::FirstUseEver)
+                .position([400.0, 200.0], Condition::FirstUseEver)
+                .build(|| {
+                    ui.text(format!("Frametime: {dt_seconds:?}"));
+                });
+
+            ui.show_demo_window(&mut imgui.demo_open);
         }
-    }
 
-    fn display_rand(&mut self, context: &mut FrameContext, dt_seconds: f32) {
-        println!("{:?}", self.current_color);
-        println!("{:?}", self.target_color);
+        let mut encoder: wgpu::CommandEncoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-        let speed = self.transition_speed * 60.0 * dt_seconds;
-        self.current_color = self.current_color.lerp(&self.target_color, speed);
-
-        let mut pass = context
-            .encoder
-            .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &context.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.current_color),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
-
-        if self.current_color.is_near(&self.target_color, 0.001) {
-            println!("reached target");
-            self.target_color = wgpu::Color::random(&mut self.rng);
+        if imgui.last_cursor != ui.mouse_cursor() {
+            imgui.last_cursor = ui.mouse_cursor();
+            imgui.platform.prepare_render(ui, &self.window);
         }
+
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &context.view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(imgui.clear_color),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        imgui
+            .renderer
+            .render(
+                imgui.context.render(),
+                &self.queue,
+                &self.device,
+                &mut rpass,
+            )
+            .expect("Rendering failed");
+
+        drop(rpass);
     }
 
     fn begin_frame(&mut self) -> Option<FrameContext> {
-        println!("[l1] begin frame");
-
-        // Calculate delta time
         let now = Instant::now();
         if let Some(last_time) = self.last_frame_time {
             self.delta_time = now.duration_since(last_time);
@@ -412,7 +470,7 @@ impl<'a> Renderer<'a> {
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(e) => {
-                eprintln!("Failed to acquire next swap chain texture: {:?}", e);
+                println!("[bf] failed to acquire next swap chain texture: {:?}", e);
                 return None;
             }
         };
@@ -437,10 +495,6 @@ impl<'a> Renderer<'a> {
     }
 
     fn end_frame(&mut self, context: FrameContext) {
-        println!(
-            "[l1] end frame (dt: {:.2}ms)",
-            self.delta_time.as_secs_f32() * 1000.0
-        );
         self.queue.submit(std::iter::once(context.encoder.finish()));
 
         context.frame.present();
