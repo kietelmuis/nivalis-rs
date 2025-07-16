@@ -2,7 +2,6 @@ use assets::Texture;
 use glyphon::{Attrs, Cache, FontSystem, Metrics, SwashCache, TextArea, TextAtlas, TextBounds};
 use imgui::{Condition, MouseCursor};
 use imgui_winit_support::WinitPlatform;
-use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -25,7 +24,6 @@ struct ImguiRenderer {
     platform: WinitPlatform,
     clear_color: wgpu::Color,
     demo_open: bool,
-    last_frame: Instant,
     last_cursor: Option<MouseCursor>,
 }
 
@@ -213,7 +211,7 @@ impl<'a> Renderer<'a> {
 
         let logical_width = size.width as f32 / self.text_renderer.scale_factor;
 
-        // idk wtf
+        // idk wtf ts is
         for (_, b) in self.text_renderer.buffers.iter_mut() {
             b.set_size(
                 &mut self.text_renderer.font_system,
@@ -385,38 +383,35 @@ impl<'a> Renderer<'a> {
             .prepare_frame(imgui.context.io_mut(), &self.window)
             .expect("Failed to prepare frame");
 
+        // draw ui
         let ui = imgui.context.frame();
         {
-            let window = ui.window("Hello world");
+            let window = ui.window("nivalis debug");
             window
+                .movable(true)
                 .size([300.0, 100.0], Condition::FirstUseEver)
+                .position([800.0, 100.0], Condition::FirstUseEver)
                 .build(|| {
-                    ui.text("Hello world!");
-                    ui.text("This...is...imgui-rs on WGPU!");
+                    ui.text("we all love imgui");
+                    ui.text(format!("Frametime: {dt_seconds:?}"));
                     ui.separator();
                     let mouse_pos = ui.io().mouse_pos;
                     ui.text(format!(
-                        "Mouse Position: ({:.1},{:.1})",
+                        "position: ({:.1},{:.1})",
                         mouse_pos[0], mouse_pos[1]
                     ));
                 });
 
-            let window = ui.window("Hello too");
-            window
-                .size([400.0, 200.0], Condition::FirstUseEver)
-                .position([400.0, 200.0], Condition::FirstUseEver)
-                .build(|| {
-                    ui.text(format!("Frametime: {dt_seconds:?}"));
-                });
-
-            ui.show_demo_window(&mut imgui.demo_open);
+            ui.show_metrics_window(&mut imgui.demo_open);
         }
 
+        // update cursor position
         if imgui.last_cursor != ui.mouse_cursor() {
             imgui.last_cursor = ui.mouse_cursor();
             imgui.platform.prepare_render(ui, &self.window);
         }
 
+        // make a renderpass for imgui
         let mut rpass = context
             .encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -434,6 +429,7 @@ impl<'a> Renderer<'a> {
                 occlusion_query_set: None,
             });
 
+        // give imgui the renderpass
         imgui
             .renderer
             .render(
@@ -444,6 +440,7 @@ impl<'a> Renderer<'a> {
             )
             .expect("Rendering failed");
 
+        // drop it after cuz its already queued
         drop(rpass);
     }
 

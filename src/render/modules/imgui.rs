@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use imgui::FontSource;
 use imgui_wgpu::RendererConfig;
+use winit::event::{Event, WindowEvent};
 
 use crate::render::ImguiRenderer;
 
@@ -49,7 +50,6 @@ impl<'a> crate::render::Renderer<'a> {
 
         let renderer =
             imgui_wgpu::Renderer::new(&mut context, &self.device, &self.queue, renderer_config);
-        let last_frame = Instant::now();
         let last_cursor = None;
         let demo_open = true;
 
@@ -59,8 +59,20 @@ impl<'a> crate::render::Renderer<'a> {
             renderer,
             clear_color,
             demo_open,
-            last_frame,
             last_cursor,
         })
+    }
+
+    pub fn handle_imgui_event(&mut self, event: &WindowEvent) {
+        if let Some(imgui_renderer) = &mut self.imgui_renderer {
+            imgui_renderer.platform.handle_event::<WindowEvent>(
+                imgui_renderer.context.io_mut(),
+                &self.window,
+                &Event::WindowEvent {
+                    window_id: self.window.id(),
+                    event: event.clone(),
+                },
+            );
+        }
     }
 }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
-    event::WindowEvent,
+    event::{Event, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Fullscreen, Window, WindowAttributes, WindowId},
 };
@@ -52,6 +52,10 @@ impl<'a> ApplicationHandler for App<'a> {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if let Some(renderer) = &mut self.renderer {
+            renderer.handle_imgui_event(&event);
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 println!("stopping app");
