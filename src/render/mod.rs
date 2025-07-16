@@ -11,6 +11,8 @@ use wgpu::{AdapterInfo, MultisampleState};
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
+use crate::util::ext::ColorExtensions;
+
 pub mod assets;
 pub mod entity;
 pub mod world;
@@ -139,20 +141,8 @@ impl<'a> Renderer<'a> {
 
         // kleuren randomizer
         let mut rng = rand::rng();
-
-        let target = wgpu::Color {
-            r: rng.random_range(0.0..1.0),
-            g: rng.random_range(0.0..1.0),
-            b: rng.random_range(0.0..1.0),
-            a: 1.0,
-        };
-
-        let current = wgpu::Color {
-            r: rng.random_range(0.0..1.0),
-            g: rng.random_range(0.0..1.0),
-            b: rng.random_range(0.0..1.0),
-            a: 1.0,
-        };
+        let target = wgpu::Color::random(&mut rng);
+        let current = wgpu::Color::random(&mut rng);
 
         println!("{:?}", current);
         println!("{:?}", target);
