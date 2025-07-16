@@ -3,7 +3,7 @@ use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    window::{Window, WindowAttributes, WindowId},
+    window::{Fullscreen, Window, WindowAttributes, WindowId},
 };
 
 mod render;
@@ -13,15 +13,20 @@ mod util;
 struct App<'a> {
     window: Option<Arc<Window>>,
     renderer: Option<render::Renderer<'a>>,
+    attributes: WindowAttributes,
 }
 
 impl<'a> ApplicationHandler for App<'a> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let window = Arc::new(
-            event_loop
-                .create_window(WindowAttributes::default().with_title("Nivalis"))
-                .unwrap(),
-        );
+        // todo: should be selectable
+        let monitor = event_loop.primary_monitor();
+
+        let mut attrs = WindowAttributes::default();
+        attrs.title = "nivalis".to_string();
+        attrs.fullscreen = Some(Fullscreen::Borderless(monitor));
+        self.attributes = attrs;
+
+        let window = Arc::new(event_loop.create_window(self.attributes.clone()).unwrap());
 
         self.window = Some(window.clone());
         self.renderer = Some(render::Renderer::new(window.clone()));
@@ -29,7 +34,15 @@ impl<'a> ApplicationHandler for App<'a> {
         // test
         if let Some(renderer) = &mut self.renderer {
             renderer.load_texture(String::from("cat.png"));
-            renderer.add_text("hallo", 15.0, 1.15);
+            renderer.add_text(
+                format!(
+                    "{} using {}",
+                    renderer.adapter_info.name, renderer.adapter_info.backend
+                )
+                .as_str(),
+                15.0,
+                1.15,
+            );
         }
 
         // Request redraw if window exists
