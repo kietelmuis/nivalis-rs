@@ -1,74 +1,57 @@
 use std::sync::Arc;
+
+use log::warn;
 use winit::{
     application::ApplicationHandler,
-    event::{Event, WindowEvent},
+    event::WindowEvent,
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    window::{Fullscreen, Window, WindowAttributes, WindowId},
+    window::{Window, WindowAttributes, WindowId},
 };
 
-mod render;
+use crate::engine::Engine;
+
+mod assets;
+mod engine;
+mod renderer;
 mod util;
 
 #[derive(Default)]
 struct App<'a> {
     window: Option<Arc<Window>>,
-    renderer: Option<render::Renderer<'a>>,
+    engine: Option<Engine<'a>>,
     attributes: WindowAttributes,
 }
 
 impl<'a> ApplicationHandler for App<'a> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // todo: should be selectable
-        let monitor = event_loop.primary_monitor();
+        let mut attributes = WindowAttributes::default();
+        attributes.title = "nivalis".to_string();
 
-        let mut attrs = WindowAttributes::default();
-        attrs.title = "nivalis".to_string();
-        attrs.fullscreen = Some(Fullscreen::Borderless(monitor));
-        self.attributes = attrs;
-
-        let window = Arc::new(event_loop.create_window(self.attributes.clone()).unwrap());
+        let window = Arc::new(event_loop.create_window(attributes).unwrap());
 
         self.window = Some(window.clone());
-        self.renderer = Some(render::Renderer::new(window.clone()));
-
-        // test
-        if let Some(renderer) = &mut self.renderer {
-            renderer.load_texture(String::from("cat.png"));
-            renderer.add_text(
-                format!(
-                    "{} using {}",
-                    renderer.adapter_info.name, renderer.adapter_info.backend
-                )
-                .as_str(),
-                15.0,
-                1.15,
-            );
-        }
-
-        // Request redraw if window exists
-        if let Some(window) = &self.window {
-            window.request_redraw();
-        }
+        self.engine = Some(Engine::new(window));
+        self.window.as_ref().unwrap().request_redraw();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        if let Some(renderer) = &mut self.renderer {
-            renderer.handle_imgui_event(&event);
+        if let Some(engine) = &mut self.engine {
+            engine.handle_event(&event);
         }
 
         match event {
             WindowEvent::CloseRequested => {
-                println!("stopping app");
+                warn!("stopping app");
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {
-                if let Some(renderer) = &mut self.renderer {
-                    renderer.handle_resize(size);
+                if let Some(engine) = &mut self.engine {
+                    engine.handle_resize(size);
                 }
             }
             WindowEvent::RedrawRequested => {
-                if let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
-                    renderer.handle_redraw();
+                if let (Some(engine), Some(window)) = (&mut self.engine, &self.window) {
+                    engine.handle_redraw();
                     window.request_redraw();
                 }
             }
@@ -78,7 +61,9 @@ impl<'a> ApplicationHandler for App<'a> {
 }
 
 fn main() {
-    env_logger::init();
+    env_logger::Builder::new()
+        .filter_module("nivalis", log::LevelFilter::Debug)
+        .init();
 
     // begin nieuwe frame na input
     let event_loop = EventLoop::new().unwrap();
