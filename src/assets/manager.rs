@@ -1,24 +1,42 @@
-use std::collections::HashMap;
+pub struct AssetPool {
+    pub textures: Vec<String>,
+}
 
-pub struct TextureHandle(pub u32);
+impl AssetPool {
+    pub fn new() -> Self {
+        AssetPool {
+            textures: Vec::new(),
+        }
+    }
+
+    pub fn register_texture(&mut self, path: &str) -> usize {
+        let full_path = format!("textures/{}", path);
+        let id = self.textures.len();
+
+        self.textures.push(full_path);
+        id
+    }
+
+    pub fn unregister_texture(&mut self, id: usize) {
+        self.textures.remove(id);
+    }
+}
 
 pub struct AssetManager {
-    texture_paths: HashMap<u32, String>,
-    next_id: u32,
+    asset_pools: Vec<AssetPool>,
 }
 
 impl AssetManager {
-    pub fn register_texture(&mut self, path: &str) -> TextureHandle {
-        let id = self.next_id;
-        self.texture_paths.insert(id, path.to_string());
-        self.next_id += 1;
-        TextureHandle(id)
-    }
-
     pub fn new() -> AssetManager {
         AssetManager {
-            texture_paths: HashMap::new(),
-            next_id: 0,
+            asset_pools: Vec::new(),
         }
+    }
+
+    pub fn create_pool(&mut self) -> &mut AssetPool {
+        let id = self.asset_pools.len();
+
+        self.asset_pools.push(AssetPool::new());
+        self.asset_pools.get_mut(id).unwrap()
     }
 }

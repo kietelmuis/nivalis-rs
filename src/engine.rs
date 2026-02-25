@@ -11,23 +11,31 @@ pub struct Engine<'a> {
 
 impl<'a> Engine<'a> {
     pub fn new(window: Arc<Window>) -> Engine<'a> {
-        let mut engine = Engine {
-            renderer: Renderer::new(window.clone()),
-            assets: AssetManager::new(),
-        };
+        let mut renderer = Renderer::new(window.clone());
+        let mut asset_manager = AssetManager::new();
+
+        let pool = asset_manager.create_pool();
+        pool.register_texture("cat.png");
+        pool.register_texture("eyyab.webp");
+        pool.register_texture("idiot.png");
+
+        renderer.insert_pool(pool);
 
         // test
-        engine.renderer.add_text(
+        renderer.add_text(
             format!(
                 "{} using {}",
-                engine.renderer.adapter_info.name, engine.renderer.adapter_info.backend
+                renderer.adapter_info.name, renderer.adapter_info.backend
             )
             .as_str(),
             15.0,
             1.15,
         );
 
-        engine
+        Engine {
+            renderer,
+            assets: asset_manager,
+        }
     }
 
     pub fn handle_redraw(&mut self) {

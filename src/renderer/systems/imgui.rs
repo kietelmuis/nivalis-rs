@@ -1,6 +1,7 @@
 use imgui::{FontSource, MouseCursor};
 use imgui_wgpu::RendererConfig;
 use imgui_winit_support::WinitPlatform;
+use log::info;
 use winit::event::{Event, WindowEvent};
 
 pub struct ImguiRenderer {
@@ -14,9 +15,7 @@ pub struct ImguiRenderer {
 
 impl<'a> crate::renderer::Renderer<'a> {
     pub fn create_imgui(&mut self) {
-        if self.imgui_renderer.is_some() {
-            return; // already created
-        }
+        info!("creating imgui renderer");
 
         let mut context = imgui::Context::create();
         let mut platform = imgui_winit_support::WinitPlatform::new(&mut context);

@@ -1,9 +1,11 @@
+use log::info;
+
+use crate::renderer::Vertex;
+
 // create shaders, pipeline layout and pipeline to self
 impl<'a> crate::renderer::Renderer<'a> {
     pub fn create_pipeline(&mut self) {
-        if self.render_pipeline.is_some() {
-            return; // already created
-        }
+        info!("creating render pipeline");
 
         // load shader
         let shader = self
@@ -20,7 +22,7 @@ impl<'a> crate::renderer::Renderer<'a> {
             self.device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("Render Pipeline Layout"),
-                    bind_group_layouts: &[],
+                    bind_group_layouts: &[&self.bind_group_layout],
                     push_constant_ranges: &[],
                 });
 
@@ -33,8 +35,12 @@ impl<'a> crate::renderer::Renderer<'a> {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2],
+                    }],
+                    compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,

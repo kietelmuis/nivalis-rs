@@ -1,15 +1,18 @@
 use glyphon::{Attrs, Cache, FontSystem, Metrics, SwashCache, TextArea, TextAtlas, TextBounds};
 use imgui::Condition;
 use log::{error, info};
+use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
-use wgpu::{AdapterInfo, BindGroupLayoutEntry, MultisampleState};
+use wgpu::util::DeviceExt;
+use wgpu::{AdapterInfo, BindGroupLayout, BindGroupLayoutEntry, MultisampleState};
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-use crate::assets::NvTexturePool;
+use crate::assets::manager::AssetPool;
+use crate::assets::{NvTexture, NvTexturePool};
 use crate::renderer::systems::imgui::ImguiRenderer;
 
 const COLOR_MODE: glyphon::ColorMode = glyphon::ColorMode::Accurate;
@@ -36,7 +39,13 @@ pub struct Renderer<'a> {
     window: Arc<Window>,
     surface_config: wgpu::SurfaceConfiguration,
     render_pipeline: Option<wgpu::RenderPipeline>,
-    bind_group_layout: wgpu::BindGroupLayout,
+    loaded_pools: Vec<NvTexturePool>,
+    bind_group_layout: BindGroupLayout,
+
+    rng: rand::rngs::ThreadRng,
+
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
 
     pub adapter_info: AdapterInfo,
 
@@ -53,6 +62,34 @@ struct FrameContext {
     view: wgpu::TextureView,
     encoder: wgpu::CommandEncoder,
 }
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct Vertex {
+    position: [f32; 3],
+    uv: [f32; 2],
+}
+
+const VERTICES: &[Vertex] = &[
+    Vertex {
+        position: [-0.5, 0.0, 0.0],
+        uv: [0.0, 0.0],
+    },
+    Vertex {
+        position: [-0.5, -0.5, 0.0],
+        uv: [0.0, 1.0],
+    },
+    Vertex {
+        position: [0.5, -0.5, 0.0],
+        uv: [1.0, 1.0],
+    },
+    Vertex {
+        position: [0.5, 0.5, 0.0],
+        uv: [1.0, 0.0],
+    },
+];
+
+const INDICES: &[u16] = &[0, 1, 2, 0, 2, 3];
 
 impl<'a> Renderer<'a> {
     pub fn new(window: Arc<Window>) -> Self {
@@ -115,40 +152,53 @@ impl<'a> Renderer<'a> {
         // zet scaling properties
         let scale_factor = window.clone().scale_factor() as f32;
 
-        // wip
-        let texture_pools: HashMap<u32, NvTexturePool> = HashMap::new();
-
-        // create bind group layout
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &texture_pools
-                .values()
-                .flat_map(|p| p.textures.values())
-                .enumerate()
-                .flat_map(|(i, _)| {
-                    [
-                        // texture binding
-                        BindGroupLayoutEntry {
-                            binding: (i * 2) as u32,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        // sampler binding
-                        BindGroupLayoutEntry {
-                            binding: (i * 2 + 1) as u32,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                    ]
-                })
-                .collect::<Vec<BindGroupLayoutEntry>>(),
-            label: Some(&"texture_bind_group_layout"),
+        let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("NvTexturePool Bind Group Layout"),
+            entries: &[
+                // texture binding
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // sampler binding
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
+
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: unsafe {
+                std::slice::from_raw_parts(
+                    VERTICES.as_ptr() as *const u8,
+                    std::mem::size_of_val(VERTICES),
+                )
+            },
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Index Buffer"),
+            contents: unsafe {
+                std::slice::from_raw_parts(
+                    INDICES.as_ptr() as *const u8,
+                    std::mem::size_of_val(INDICES),
+                )
+            },
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let rng = rand::thread_rng();
 
         let mut renderer = Renderer {
             surface: surface,
@@ -157,7 +207,12 @@ impl<'a> Renderer<'a> {
             surface_config: surface_config,
             window: window,
             render_pipeline: None,
-            bind_group_layout: bind_group_layout,
+            loaded_pools: Vec::new(),
+            bind_group_layout: bind_layout,
+
+            vertex_buffer,
+            index_buffer,
+            rng,
 
             adapter_info: adapter.get_info(),
 
@@ -181,6 +236,26 @@ impl<'a> Renderer<'a> {
         renderer.create_pipeline();
         renderer.create_imgui();
         renderer
+    }
+
+    pub fn insert_pool(&mut self, pool: &mut AssetPool) -> usize {
+        info!("adding new asset pool");
+
+        let id = self.loaded_pools.len();
+
+        self.loaded_pools.push(NvTexturePool {
+            textures: pool
+                .textures
+                .iter()
+                .map(|path| {
+                    NvTexture::from_name(&self.device, &self.queue, &self.bind_group_layout, path)
+                })
+                .collect(),
+            layout: self.bind_group_layout.clone(),
+        });
+        self.create_pipeline();
+
+        id
     }
 
     pub fn handle_resize(&mut self, size: PhysicalSize<u32>) {
@@ -225,6 +300,7 @@ impl<'a> Renderer<'a> {
         let dt_seconds = self.delta_time.as_secs_f32();
 
         self.display_imgui(&mut context, dt_seconds);
+        self.render_image(&mut context);
         self.display_text(&mut context, dt_seconds);
 
         self.end_frame(context);
@@ -262,7 +338,62 @@ impl<'a> Renderer<'a> {
         info!("adding text {} with text {}", id, text);
     }
 
-    fn render_image(&mut self, context: &mut FrameContext) {}
+    fn render_image(&mut self, context: &mut FrameContext) {
+        let pipeline = match &self.render_pipeline {
+            Some(pipeline) => pipeline,
+            None => {
+                error!("No render pipeline");
+                return;
+            }
+        };
+
+        let pool = match self.loaded_pools.get(0) {
+            Some(pool) => pool,
+            None => {
+                error!("No texture pool");
+                return;
+            }
+        };
+
+        let texture = match pool
+            .textures
+            .get(self.rng.random_range(0..pool.textures.len()))
+        {
+            Some(texture) => texture,
+            None => {
+                error!("No texture");
+                return;
+            }
+        };
+
+        let mut pass = context
+            .encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Image Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &context.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &texture.bind_group, &[]);
+        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        pass.draw_indexed(0..6, 0, 0..1);
+    }
 
     fn display_text(&mut self, context: &mut FrameContext, _dt_seconds: f32) {
         let scale_factor = self.text_renderer.scale_factor;
@@ -332,7 +463,6 @@ impl<'a> Renderer<'a> {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-        pass.set_pipeline(self.render_pipeline.as_ref().unwrap());
 
         self.text_renderer
             .renderer

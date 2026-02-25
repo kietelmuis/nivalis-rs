@@ -11,7 +11,8 @@ pub struct Rectangle {
 }
 
 pub struct NvTexturePool {
-    pub textures: HashMap<u32, NvTexture>,
+    pub textures: Vec<NvTexture>,
+    pub layout: wgpu::BindGroupLayout,
 }
 
 pub struct NvTexture {
@@ -28,7 +29,7 @@ impl NvTexture {
         bind_group_layout: &wgpu::BindGroupLayout,
         texture_name: &str,
     ) -> Self {
-        let file = format!("assets/textures/{}", texture_name);
+        let file = format!("assets/{}", texture_name);
         debug!("[l0] loading texture at {}", file);
 
         let image = image::open(file).unwrap();
