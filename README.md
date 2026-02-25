@@ -1,15 +1,18 @@
 # nivalis
+
 hi
 
 ## rendering
+
 - [x] text
 - [x] imgui
-- [ ] 2d sprites
-  - [ ] textures
+- [x] 2d sprites
+    - [x] textures
 - [ ] 3d models
-  - [ ] materials
-  - [ ] textures
+    - [ ] materials
+    - [ ] textures
 
 ## ecs
+
 - [ ] world
 - [ ] entity
