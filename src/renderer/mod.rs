@@ -12,7 +12,7 @@ use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
 use crate::assets::manager::AssetPool;
-use crate::assets::{NvTexture, NvTexturePool};
+use crate::assets::texture::{NvTexture, NvTexturePool};
 use crate::renderer::systems::imgui::ImguiRenderer;
 
 const COLOR_MODE: glyphon::ColorMode = glyphon::ColorMode::Accurate;
@@ -245,7 +245,7 @@ impl<'a> Renderer<'a> {
 
         self.loaded_pools.push(NvTexturePool {
             textures: pool
-                .textures
+                .assets
                 .iter()
                 .map(|path| {
                     NvTexture::from_name(&self.device, &self.queue, &self.bind_group_layout, path)
@@ -338,6 +338,30 @@ impl<'a> Renderer<'a> {
         info!("adding text {} with text {}", id, text);
     }
 
+    fn render_model(&mut self, context: &mut FrameContext) {
+        let mut pass = context
+            .encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Image Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &context.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+    }
+
     fn render_image(&mut self, context: &mut FrameContext) {
         let pipeline = match &self.render_pipeline {
             Some(pipeline) => pipeline,
@@ -355,10 +379,7 @@ impl<'a> Renderer<'a> {
             }
         };
 
-        let texture = match pool
-            .textures
-            .get(self.rng.random_range(0..pool.textures.len()))
-        {
+        let texture = match pool.textures.get(0) {
             Some(texture) => texture,
             None => {
                 error!("No texture");

@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use winit::{dpi::PhysicalSize, event::WindowEvent, window::Window};
 
-use crate::{assets::manager::AssetManager, renderer::Renderer};
+use crate::{
+    assets::{AssetType, manager::AssetManager},
+    renderer::Renderer,
+};
 
 pub struct Engine<'a> {
     renderer: Renderer<'a>,
@@ -14,12 +17,15 @@ impl<'a> Engine<'a> {
         let mut renderer = Renderer::new(window.clone());
         let mut asset_manager = AssetManager::new();
 
-        let pool = asset_manager.create_pool();
-        pool.register_texture("cat.png");
-        pool.register_texture("eyyab.webp");
-        pool.register_texture("idiot.png");
+        let model_pool = asset_manager.create_pool(AssetType::Model);
+        model_pool.register("sponza.gltf");
+        // renderer.insert_pool(model_pool);
 
-        renderer.insert_pool(pool);
+        let tex_pool = asset_manager.create_pool(AssetType::Texture);
+        tex_pool.register("cat.png");
+        tex_pool.register("eyyab.webp");
+        tex_pool.register("idiot.png");
+        renderer.insert_pool(tex_pool);
 
         // test
         renderer.add_text(
