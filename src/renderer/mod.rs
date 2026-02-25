@@ -561,6 +561,16 @@ impl<'a> Renderer<'a> {
 
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
+            Err(wgpu::SurfaceError::Outdated) | Err(wgpu::SurfaceError::Lost) => {
+                self.surface.configure(&self.device, &self.surface_config);
+                match self.surface.get_current_texture() {
+                    Ok(frame) => frame,
+                    Err(e) => {
+                        error!("[bf] failed after configuring: {}", e);
+                        return None;
+                    }
+                }
+            }
             Err(e) => {
                 error!("[bf] failed to acquire next swap chain texture: {:?}", e);
                 return None;
