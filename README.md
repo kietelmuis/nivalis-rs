@@ -1,18 +1,40 @@
 # nivalis
 
-hi
+A 2D/3D game engine built with Rust.
 
-## rendering
+## roadmap
 
-- [x] text
-- [x] imgui
-- [x] 2d sprites
-    - [x] textures
-- [ ] 3d models
-    - [ ] materials
-    - [ ] textures
+### 2D Basics
 
-## ecs
+- [x] Text rendering
+- [x] ImGui integration
+- [x] 2D sprites
+- [x] Basic asset loading
+- [ ] Sprite repositioning
 
-- [ ] world
-- [ ] entity
+### 3D Basics
+
+- [ ] GLTF model loading
+- [ ] Camera
+- [ ] Basic mesh rendering
+
+### Game Systems
+
+- [ ] Input handling
+- [ ] Physics basics
+- [ ] Scene graph
+
+### 3D Features
+
+- [ ] Materials
+- [ ] Lighting
+
+### Asset Management
+
+- [ ] Asset bundles
+- [ ] Async loading
+
+### Polish
+
+- [ ] Post-processing
+- [ ] Audio
