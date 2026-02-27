@@ -1,9 +1,12 @@
 use image::GenericImageView;
 use log::debug;
 
+use crate::assets::manager::Asset;
+
 pub struct NvTexturePool {
     pub textures: Vec<NvTexture>,
     pub layout: wgpu::BindGroupLayout,
+    pub name: String,
 }
 
 pub struct NvTexture {
@@ -11,16 +14,17 @@ pub struct NvTexture {
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
     pub bind_group: wgpu::BindGroup,
+    pub texture_name: String,
 }
 
 impl NvTexture {
-    pub fn from_name(
+    pub fn from_asset(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         bind_group_layout: &wgpu::BindGroupLayout,
-        texture_name: &str,
+        texture_asset: &Asset,
     ) -> Self {
-        let file = format!("assets/textures/{}", texture_name);
+        let file = format!("assets/textures/{}", texture_asset.file_name);
         debug!("[l0] loading texture at {}", file);
 
         let image = image::open(file).unwrap();
@@ -42,7 +46,7 @@ impl NvTexture {
             // TEXTURE_BINDING tells wgpu that we want to use this texture in shaders
             // COPY_DST means that we want to copy data to this texture
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            label: Some(texture_name),
+            label: Some(&texture_asset.file_name),
             view_formats: &[],
         });
 
@@ -77,7 +81,7 @@ impl NvTexture {
                     resource: wgpu::BindingResource::Sampler(&sampler),
                 },
             ],
-            label: Some(&format!("{}_bind_group", texture_name)),
+            label: Some(&format!("{}_bind_group", texture_asset.file_name)),
         });
 
         NvTexture {
@@ -85,6 +89,7 @@ impl NvTexture {
             view,
             sampler,
             bind_group,
+            texture_name: texture_asset.file_name.clone(),
         }
     }
 }

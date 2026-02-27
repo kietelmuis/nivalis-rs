@@ -17,15 +17,11 @@ impl<'a> Engine<'a> {
         let mut renderer = Renderer::new(window.clone());
         let mut asset_manager = AssetManager::new();
 
-        let model_pool = asset_manager.create_pool(AssetType::Model);
-        model_pool.register("sponza.gltf");
-        // renderer.insert_pool(model_pool);
-
-        let tex_pool = asset_manager.create_pool(AssetType::Texture);
-        tex_pool.register("cat.png");
-        tex_pool.register("eyyab.webp");
-        tex_pool.register("idiot.png");
-        renderer.insert_pool(tex_pool);
+        let textures = asset_manager.create_bundle(AssetType::Texture);
+        textures.register("cat.png");
+        textures.register("eyyab.webp");
+        textures.register("idiot.png");
+        renderer.insert_bundle("generic pool", textures);
 
         // test
         renderer.add_text(

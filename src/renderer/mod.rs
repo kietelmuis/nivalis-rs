@@ -1,7 +1,6 @@
 use glyphon::{Attrs, Cache, FontSystem, Metrics, SwashCache, TextArea, TextAtlas, TextBounds};
 use imgui::Condition;
 use log::{error, info};
-use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -11,7 +10,7 @@ use wgpu::{AdapterInfo, BindGroupLayout, BindGroupLayoutEntry, MultisampleState}
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-use crate::assets::manager::AssetPool;
+use crate::assets::manager::AssetBundle;
 use crate::assets::texture::{NvTexture, NvTexturePool};
 use crate::renderer::systems::imgui::ImguiRenderer;
 
@@ -198,8 +197,6 @@ impl<'a> Renderer<'a> {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        let rng = rand::thread_rng();
-
         let mut renderer = Renderer {
             surface: surface,
             device: device,
@@ -212,7 +209,7 @@ impl<'a> Renderer<'a> {
 
             vertex_buffer,
             index_buffer,
-            rng,
+            rng: rand::rng(),
 
             adapter_info: adapter.get_info(),
 
@@ -238,20 +235,21 @@ impl<'a> Renderer<'a> {
         renderer
     }
 
-    pub fn insert_pool(&mut self, pool: &mut AssetPool) -> usize {
+    pub fn insert_bundle(&mut self, name: &str, bundle: &AssetBundle) -> usize {
         info!("adding new asset pool");
 
         let id = self.loaded_pools.len();
 
         self.loaded_pools.push(NvTexturePool {
-            textures: pool
+            textures: bundle
                 .assets
                 .iter()
-                .map(|path| {
-                    NvTexture::from_name(&self.device, &self.queue, &self.bind_group_layout, path)
+                .map(|asset| {
+                    NvTexture::from_asset(&self.device, &self.queue, &self.bind_group_layout, asset)
                 })
                 .collect(),
             layout: self.bind_group_layout.clone(),
+            name: name.to_string(),
         });
         self.create_pipeline();
 
@@ -513,17 +511,35 @@ impl<'a> Renderer<'a> {
             let window = ui.window("nivalis debug");
             window
                 .movable(true)
-                .size([300.0, 100.0], Condition::FirstUseEver)
-                .position([800.0, 100.0], Condition::FirstUseEver)
+                .size([400.0, 200.0], Condition::FirstUseEver)
+                .position([0.0, 0.0], Condition::FirstUseEver)
                 .build(|| {
                     ui.text("we all love imgui");
-                    ui.text(format!("Frametime: {dt_seconds:?}"));
                     ui.separator();
                     let mouse_pos = ui.io().mouse_pos;
                     ui.text(format!(
                         "position: ({:.1},{:.1})",
                         mouse_pos[0], mouse_pos[1]
                     ));
+
+                    ui.columns(2, "pool_cols", true);
+                    ui.text("Pool");
+                    ui.next_column();
+                    ui.text("Textures");
+                    ui.next_column();
+                    ui.separator();
+
+                    self.loaded_pools.iter().for_each(|p| {
+                        ui.text(&p.name);
+                        ui.next_column();
+
+                        let texture_names: Vec<String> =
+                            p.textures.iter().map(|t| t.texture_name.clone()).collect();
+                        ui.text(texture_names.join(", "));
+                        ui.next_column();
+                    });
+
+                    ui.columns(1, "end_pool_cols", false);
                 });
 
             ui.show_metrics_window(&mut imgui.demo_open);
