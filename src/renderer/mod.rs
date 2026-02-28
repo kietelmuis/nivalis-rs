@@ -1,11 +1,15 @@
+use ::imgui as imgui_lib;
+
 use glyphon::{Attrs, Cache, FontSystem, Metrics, SwashCache, TextArea, TextAtlas, TextBounds};
-use imgui::Condition;
-use log::{error, info};
+use imgui_lib::Condition;
+use log::{error, info, trace};
 use rand::Rng;
 use std::collections::HashMap;
+use std::fmt::format;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
+use wgpu::hal::PipelineError;
 use wgpu::util::DeviceExt;
 use wgpu::{AdapterInfo, BindGroupLayout, BindGroupLayoutEntry, MultisampleState};
 use winit::dpi::PhysicalSize;
@@ -13,12 +17,15 @@ use winit::window::Window;
 
 use crate::assets::manager::AssetPool;
 use crate::assets::{NvTexture, NvTexturePool};
-use crate::renderer::systems::imgui::ImguiRenderer;
+use crate::renderer::imgui::ImguiRenderer;
+use crate::renderer::pipeline::PipelineType;
 
-const COLOR_MODE: glyphon::ColorMode = glyphon::ColorMode::Accurate;
+mod imgui;
+mod layer;
+mod pipeline;
+mod text;
+
 const SWAPCHAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
-
-mod systems;
 
 pub struct TextRenderer<'a> {
     physical_size: PhysicalSize<u32>,
@@ -38,9 +45,9 @@ pub struct Renderer<'a> {
     queue: wgpu::Queue,
     window: Arc<Window>,
     surface_config: wgpu::SurfaceConfiguration,
-    render_pipeline: Option<wgpu::RenderPipeline>,
     loaded_pools: Vec<NvTexturePool>,
-    bind_group_layout: BindGroupLayout,
+    bind_group_layouts: Vec<BindGroupLayout>,
+    pipelines: HashMap<PipelineType, wgpu::RenderPipeline>,
 
     rng: rand::rngs::ThreadRng,
 
@@ -50,7 +57,7 @@ pub struct Renderer<'a> {
     pub adapter_info: AdapterInfo,
 
     // renderers
-    text_renderer: TextRenderer<'a>,
+    text_renderer: Option<TextRenderer<'a>>,
     imgui_renderer: Option<ImguiRenderer>,
 
     last_frame_time: Option<Instant>,
@@ -93,6 +100,8 @@ const INDICES: &[u16] = &[0, 1, 2, 0, 2, 3];
 
 impl<'a> Renderer<'a> {
     pub fn new(window: Arc<Window>) -> Self {
+        trace!("creating renderer");
+
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(window.clone()).unwrap();
 
@@ -102,7 +111,7 @@ impl<'a> Renderer<'a> {
             force_fallback_adapter: false,
             compatible_surface: Some(&surface),
         }))
-        .unwrap();
+        .expect("failed to find graphical adapter");
 
         // show gpu info
         let info = adapter.get_info();
@@ -119,13 +128,12 @@ impl<'a> Renderer<'a> {
             memory_hints: wgpu::MemoryHints::default(),
             trace: wgpu::Trace::default(),
         }))
-        .unwrap();
+        .expect("failed to request graphical device");
 
         // create surface configuration
         let size = window.clone().inner_size();
         info!("window size is {} x {}", size.width, size.height);
 
-        // maak en zet surface config met format en mailbox present mode
         let mut surface_config = surface
             .get_default_config(&adapter, size.width, size.height)
             .unwrap();
@@ -133,24 +141,6 @@ impl<'a> Renderer<'a> {
         surface_config.present_mode = wgpu::PresentMode::Mailbox;
 
         surface.configure(&device, &surface_config);
-
-        // tekst renderer
-        let font_system = FontSystem::new();
-        let swash_cache = SwashCache::new();
-        let cache = Cache::new(&device);
-        let viewport = glyphon::Viewport::new(&device, &cache);
-        let mut atlas =
-            TextAtlas::with_color_mode(&device, &queue, &cache, SWAPCHAIN_FORMAT, COLOR_MODE);
-        let text_renderer =
-            glyphon::TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
-
-        // maak font
-        let font = Attrs::new()
-            .family(glyphon::Family::SansSerif)
-            .weight(glyphon::Weight::NORMAL);
-
-        // zet scaling properties
-        let scale_factor = window.clone().scale_factor() as f32;
 
         let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("NvTexturePool Bind Group Layout"),
@@ -198,7 +188,7 @@ impl<'a> Renderer<'a> {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        let rng = rand::thread_rng();
+        let scale_factor = window.clone().scale_factor() as f32;
 
         let mut renderer = Renderer {
             surface: surface,
@@ -206,35 +196,56 @@ impl<'a> Renderer<'a> {
             queue: queue,
             surface_config: surface_config,
             window: window,
-            render_pipeline: None,
             loaded_pools: Vec::new(),
-            bind_group_layout: bind_layout,
+            bind_group_layouts: Vec::new(),
+            pipelines: HashMap::new(),
 
             vertex_buffer,
             index_buffer,
-            rng,
+            rng: rand::rng(),
 
             adapter_info: adapter.get_info(),
 
             imgui_renderer: None,
-            text_renderer: TextRenderer {
-                physical_size: size,
-                scale_factor: scale_factor,
-                font_system: font_system,
-                base_font: font,
-                swash_cache: swash_cache,
-                viewport: viewport,
-                atlas: atlas,
-                renderer: text_renderer,
-                buffers: HashMap::new(),
-            },
+            text_renderer: None,
 
             last_frame_time: None,
             delta_time: Duration::from_secs_f32(0.0),
         };
 
-        renderer.create_pipeline();
-        renderer.create_imgui();
+        renderer.bind_group_layouts.push(bind_layout);
+
+        trace!("creating pipelines");
+
+        let basic_2d_pipeline = renderer
+            .create_pipeline(
+                renderer
+                    .bind_group_layouts
+                    .clone()
+                    .iter()
+                    .collect::<Vec<&BindGroupLayout>>()
+                    .as_slice(),
+                &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2],
+                }],
+            )
+            .expect("failed to create basic 2d render pipeline");
+
+        renderer
+            .pipelines
+            .insert(PipelineType::Basic2D, basic_2d_pipeline);
+
+        renderer.text_renderer =
+            Some(renderer.create_text_renderer(MultisampleState::default(), scale_factor, size));
+        renderer.imgui_renderer = Some(
+            renderer
+                .create_imgui_renderer()
+                .expect("failed to create imgui renderer"),
+        );
+
+        trace!("renderer created");
         renderer
     }
 
@@ -242,26 +253,35 @@ impl<'a> Renderer<'a> {
         info!("adding new asset pool");
 
         let id = self.loaded_pools.len();
+        let layout = self
+            .bind_group_layouts
+            .first()
+            .expect("there is no bind group layout");
 
         self.loaded_pools.push(NvTexturePool {
             textures: pool
                 .textures
                 .iter()
-                .map(|path| {
-                    NvTexture::from_name(&self.device, &self.queue, &self.bind_group_layout, path)
-                })
+                .map(|path| NvTexture::from_name(&self.device, &self.queue, &layout, path))
                 .collect(),
-            layout: self.bind_group_layout.clone(),
+            layout: layout.clone(),
         });
-        self.create_pipeline();
 
         id
     }
 
     pub fn handle_resize(&mut self, size: PhysicalSize<u32>) {
         if size.height == 0 || size.width == 0 {
-            return; // stop text adjustment if window size invalid
+            return; // window size invalid
         }
+
+        let text_renderer = match self.text_renderer {
+            Some(ref mut text_renderer) => text_renderer,
+            None => {
+                error!("No text renderer to handle resize");
+                return;
+            }
+        };
 
         // adjust surface config based on width and height
         self.surface_config.width = size.width;
@@ -270,7 +290,7 @@ impl<'a> Renderer<'a> {
         self.window.request_redraw();
 
         // adjust text renderer's viewport to new surface config
-        self.text_renderer.viewport.update(
+        text_renderer.viewport.update(
             &self.queue,
             glyphon::Resolution {
                 width: self.surface_config.width,
@@ -279,19 +299,19 @@ impl<'a> Renderer<'a> {
         );
 
         // adjust the text renderer's manual scale and size
-        self.text_renderer.scale_factor = self.window.scale_factor() as f32;
-        self.text_renderer.physical_size = size.cast();
+        text_renderer.scale_factor = self.window.scale_factor() as f32;
+        text_renderer.physical_size = size.cast();
 
-        let logical_width = size.width as f32 / self.text_renderer.scale_factor;
+        let logical_width = size.width as f32 / text_renderer.scale_factor;
 
         // resize font based on new surface config
-        for (_, b) in self.text_renderer.buffers.iter_mut() {
+        for (_, b) in text_renderer.buffers.iter_mut() {
             b.set_size(
-                &mut self.text_renderer.font_system,
+                &mut text_renderer.font_system,
                 Some(logical_width - 20.0),
                 None,
             );
-            b.shape_until_scroll(&mut self.text_renderer.font_system, false);
+            b.shape_until_scroll(&mut text_renderer.font_system, false);
         }
     }
 
@@ -308,38 +328,43 @@ impl<'a> Renderer<'a> {
         Some(())
     }
 
-    pub fn add_text(&mut self, text: &str, font_size: f32, line_height: f32) {
-        let logical_width =
-            self.text_renderer.physical_size.width as f32 / self.text_renderer.scale_factor;
+    pub fn add_text(&mut self, text: &str, font_size: f32, line_height: f32) -> Option<usize> {
+        let text_renderer = match &mut self.text_renderer {
+            Some(t) => t,
+            None => {
+                error!("failed to create text: renderer not initialized");
+                None?
+            }
+        };
+
+        let logical_width = text_renderer.physical_size.width as f32 / text_renderer.scale_factor;
 
         let mut text_buffer = glyphon::Buffer::new(
-            &mut self.text_renderer.font_system,
+            &mut text_renderer.font_system,
             Metrics::relative(font_size, line_height),
         );
         text_buffer.set_size(
-            &mut self.text_renderer.font_system,
+            &mut text_renderer.font_system,
             Some(logical_width - 20.0),
             None,
         );
         text_buffer.set_text(
-            &mut self.text_renderer.font_system,
+            &mut text_renderer.font_system,
             text,
-            &self.text_renderer.base_font,
+            &text_renderer.base_font,
             glyphon::Shaping::Advanced,
         );
-        text_buffer.shape_until_scroll(&mut self.text_renderer.font_system, false);
+        text_buffer.shape_until_scroll(&mut text_renderer.font_system, false);
 
-        let id = Uuid::new_v4();
+        let id = text_renderer.buffers.len();
+        text_renderer.buffers.insert(id.to_string(), text_buffer);
 
-        self.text_renderer
-            .buffers
-            .insert(id.to_string(), text_buffer);
-
-        info!("adding text {} with text {}", id, text);
+        info!("adding text {} with id {}", text, id);
+        Some(id)
     }
 
     fn render_image(&mut self, context: &mut FrameContext) {
-        let pipeline = match &self.render_pipeline {
+        let pipeline = match self.pipelines.get(&PipelineType::Basic2D) {
             Some(pipeline) => pipeline,
             None => {
                 error!("No render pipeline");
@@ -396,16 +421,23 @@ impl<'a> Renderer<'a> {
     }
 
     fn display_text(&mut self, context: &mut FrameContext, _dt_seconds: f32) {
-        let scale_factor = self.text_renderer.scale_factor;
+        let text_renderer = match &mut self.text_renderer {
+            Some(t) => t,
+            None => {
+                error!("failed to display text: renderer not initialized");
+                return;
+            }
+        };
+
+        let scale_factor = text_renderer.scale_factor;
 
         let left = 10.0 * scale_factor;
         let mut top = 10.0 * scale_factor;
 
         let bounds_left = left.floor() as i32;
-        let bounds_right = (self.text_renderer.physical_size.width - 10) as i32;
+        let bounds_right = (text_renderer.physical_size.width - 10) as i32;
 
-        let text_areas: Vec<TextArea> = self
-            .text_renderer
+        let text_areas: Vec<TextArea> = text_renderer
             .buffers
             .iter()
             .map(|(_, b)| {
@@ -418,7 +450,7 @@ impl<'a> Renderer<'a> {
                         left: bounds_left,
                         top: top.floor() as i32,
                         right: bounds_right,
-                        bottom: top.floor() as i32 + self.text_renderer.physical_size.height as i32,
+                        bottom: top.floor() as i32 + text_renderer.physical_size.height as i32,
                     },
                     default_color: glyphon::Color::rgb(255, 255, 255),
                     custom_glyphs: &[],
@@ -434,16 +466,16 @@ impl<'a> Renderer<'a> {
             })
             .collect();
 
-        self.text_renderer
+        text_renderer
             .renderer
             .prepare(
                 &self.device,
                 &self.queue,
-                &mut self.text_renderer.font_system,
-                &mut self.text_renderer.atlas,
-                &self.text_renderer.viewport,
+                &mut text_renderer.font_system,
+                &mut text_renderer.atlas,
+                &text_renderer.viewport,
                 text_areas,
-                &mut self.text_renderer.swash_cache,
+                &mut text_renderer.swash_cache,
             )
             .unwrap();
 
@@ -464,13 +496,9 @@ impl<'a> Renderer<'a> {
                 occlusion_query_set: None,
             });
 
-        self.text_renderer
+        text_renderer
             .renderer
-            .render(
-                &self.text_renderer.atlas,
-                &self.text_renderer.viewport,
-                &mut pass,
-            )
+            .render(&text_renderer.atlas, &text_renderer.viewport, &mut pass)
             .unwrap();
     }
 
@@ -600,6 +628,10 @@ impl<'a> Renderer<'a> {
         self.queue.submit(std::iter::once(context.encoder.finish()));
 
         context.frame.present();
-        self.text_renderer.atlas.trim();
+
+        match &mut self.text_renderer {
+            Some(t) => t.atlas.trim(),
+            None => (),
+        };
     }
 }
