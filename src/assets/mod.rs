@@ -5,11 +5,6 @@ use log::debug;
 
 pub mod manager;
 
-pub struct Rectangle {
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-}
-
 pub struct NvTexturePool {
     pub textures: Vec<NvTexture>,
     pub layout: wgpu::BindGroupLayout,
@@ -30,7 +25,7 @@ impl NvTexture {
         texture_name: &str,
     ) -> Self {
         let file = format!("assets/{}", texture_name);
-        debug!("[l0] loading texture at {}", file);
+        debug!("loading texture at {}", file);
 
         let image = image::open(file).unwrap();
         let rgba = image.to_rgba8();

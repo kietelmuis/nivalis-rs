@@ -11,7 +11,7 @@ pub struct Sprite {
     texture: NvTexture,
 }
 
-pub struct Layer<I> {
+pub(super) struct Layer<I> {
     pub instances: Vec<I>,
     pub zindex: u32,
 }

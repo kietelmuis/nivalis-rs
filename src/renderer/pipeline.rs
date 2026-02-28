@@ -9,13 +9,13 @@ static BASIC_SHADER: ShaderSource =
     ShaderSource::Wgsl(Cow::Borrowed(include_str!("../../shaders/basic.wgsl")));
 
 #[derive(Hash, Eq, PartialEq)]
-pub enum PipelineType {
+pub(super) enum PipelineType {
     Basic2D,
     Basic3D,
 }
 
 impl<'a> Renderer<'a> {
-    pub fn create_pipeline(
+    pub(super) fn create_pipeline(
         &mut self,
         bind_group_layouts: &[&wgpu::BindGroupLayout],
         vertex_buffer_layouts: &[wgpu::VertexBufferLayout],

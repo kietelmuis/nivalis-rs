@@ -1,15 +1,12 @@
 use ::imgui as imgui_lib;
-
-use glyphon::{Attrs, Cache, FontSystem, Metrics, SwashCache, TextArea, TextAtlas, TextBounds};
 use imgui_lib::Condition;
-use log::{error, info, trace};
+
+use glyphon::{Metrics, TextArea, TextBounds};
+use log::{error, info};
 use rand::Rng;
 use std::collections::HashMap;
-use std::fmt::format;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use uuid::Uuid;
-use wgpu::hal::PipelineError;
 use wgpu::util::DeviceExt;
 use wgpu::{AdapterInfo, BindGroupLayout, BindGroupLayoutEntry, MultisampleState};
 use winit::dpi::PhysicalSize;
@@ -19,6 +16,7 @@ use crate::assets::manager::AssetPool;
 use crate::assets::{NvTexture, NvTexturePool};
 use crate::renderer::imgui::ImguiRenderer;
 use crate::renderer::pipeline::PipelineType;
+use crate::renderer::text::TextRenderer;
 
 mod imgui;
 mod layer;
@@ -26,18 +24,6 @@ mod pipeline;
 mod text;
 
 const SWAPCHAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
-
-pub struct TextRenderer<'a> {
-    physical_size: PhysicalSize<u32>,
-    scale_factor: f32,
-    font_system: FontSystem,
-    base_font: Attrs<'a>,
-    swash_cache: SwashCache,
-    viewport: glyphon::Viewport,
-    atlas: TextAtlas,
-    renderer: glyphon::TextRenderer,
-    buffers: HashMap<String, glyphon::Buffer>,
-}
 
 pub struct Renderer<'a> {
     surface: wgpu::Surface<'a>,
@@ -100,7 +86,7 @@ const INDICES: &[u16] = &[0, 1, 2, 0, 2, 3];
 
 impl<'a> Renderer<'a> {
     pub fn new(window: Arc<Window>) -> Self {
-        trace!("creating renderer");
+        info!("creating renderer");
 
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(window.clone()).unwrap();
@@ -142,29 +128,32 @@ impl<'a> Renderer<'a> {
 
         surface.configure(&device, &surface_config);
 
-        let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("NvTexturePool Bind Group Layout"),
-            entries: &[
-                // texture binding
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+        let mut bind_layouts = Vec::new();
+        bind_layouts.push(
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("NvTexturePool Bind Group Layout"),
+                entries: &[
+                    // texture binding
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // sampler binding
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+                    // sampler binding
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            }),
+        );
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
@@ -197,7 +186,7 @@ impl<'a> Renderer<'a> {
             surface_config: surface_config,
             window: window,
             loaded_pools: Vec::new(),
-            bind_group_layouts: Vec::new(),
+            bind_group_layouts: bind_layouts,
             pipelines: HashMap::new(),
 
             vertex_buffer,
@@ -213,9 +202,7 @@ impl<'a> Renderer<'a> {
             delta_time: Duration::from_secs_f32(0.0),
         };
 
-        renderer.bind_group_layouts.push(bind_layout);
-
-        trace!("creating pipelines");
+        info!("creating pipelines");
 
         let basic_2d_pipeline = renderer
             .create_pipeline(
@@ -237,15 +224,19 @@ impl<'a> Renderer<'a> {
             .pipelines
             .insert(PipelineType::Basic2D, basic_2d_pipeline);
 
-        renderer.text_renderer =
-            Some(renderer.create_text_renderer(MultisampleState::default(), scale_factor, size));
+        renderer.text_renderer = Some(renderer.create_text_renderer(
+            MultisampleState::default(),
+            scale_factor,
+            size,
+            SWAPCHAIN_FORMAT,
+        ));
         renderer.imgui_renderer = Some(
             renderer
                 .create_imgui_renderer()
                 .expect("failed to create imgui renderer"),
         );
 
-        trace!("renderer created");
+        info!("renderer created");
         renderer
     }
 
@@ -289,7 +280,7 @@ impl<'a> Renderer<'a> {
         self.surface.configure(&self.device, &self.surface_config);
         self.window.request_redraw();
 
-        // adjust text renderer's viewport to new surface config
+        // adjust text renderer viewport to new surface config
         text_renderer.viewport.update(
             &self.queue,
             glyphon::Resolution {
@@ -298,7 +289,7 @@ impl<'a> Renderer<'a> {
             },
         );
 
-        // adjust the text renderer's manual scale and size
+        // adjust the text renderer scale and size
         text_renderer.scale_factor = self.window.scale_factor() as f32;
         text_renderer.physical_size = size.cast();
 
@@ -319,9 +310,9 @@ impl<'a> Renderer<'a> {
         let mut context = self.begin_frame()?;
         let dt_seconds = self.delta_time.as_secs_f32();
 
-        self.display_imgui(&mut context, dt_seconds);
         self.render_image(&mut context);
         self.display_text(&mut context, dt_seconds);
+        self.display_imgui(&mut context, dt_seconds);
 
         self.end_frame(context);
 
@@ -556,7 +547,7 @@ impl<'a> Renderer<'a> {
                     view: &context.view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(imgui.clear_color),
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],

@@ -4,22 +4,21 @@ use imgui_winit_support::WinitPlatform;
 use log::info;
 use winit::event::{Event, WindowEvent};
 
-pub struct ImguiRenderer {
+pub(super) struct ImguiRenderer {
     pub context: imgui::Context,
     pub renderer: imgui_wgpu::Renderer,
     pub platform: WinitPlatform,
-    pub clear_color: wgpu::Color,
     pub demo_open: bool,
     pub last_cursor: Option<MouseCursor>,
 }
 
 #[derive(Debug)]
-pub enum ImguiError {
+pub(super) enum ImguiError {
     TextRendererNotInitialized,
 }
 
 impl<'a> crate::renderer::Renderer<'a> {
-    pub fn create_imgui_renderer(&mut self) -> Result<ImguiRenderer, ImguiError> {
+    pub(super) fn create_imgui_renderer(&mut self) -> Result<ImguiRenderer, ImguiError> {
         info!("creating imgui renderer");
 
         let text_renderer = match &self.text_renderer {
@@ -48,13 +47,6 @@ impl<'a> crate::renderer::Renderer<'a> {
             }),
         }]);
 
-        let clear_color = wgpu::Color {
-            r: 0.1,
-            g: 0.2,
-            b: 0.3,
-            a: 1.0,
-        };
-
         let renderer_config = RendererConfig {
             texture_format: self.surface_config.format,
             ..Default::default()
@@ -69,7 +61,6 @@ impl<'a> crate::renderer::Renderer<'a> {
             context,
             platform,
             renderer,
-            clear_color,
             demo_open,
             last_cursor,
         })
