@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use image::GenericImageView;
 use log::debug;
 

@@ -7,14 +7,14 @@ use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use wgpu::util::DeviceExt;
-use wgpu::{AdapterInfo, BindGroupLayout, BindGroupLayoutEntry, MultisampleState};
+use wgpu::{AdapterInfo, BindGroup, BindGroupLayout, BindGroupLayoutEntry, MultisampleState};
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
 use crate::assets::manager::AssetPool;
 use crate::assets::{NvTexture, NvTexturePool};
 use crate::renderer::imgui::ImguiRenderer;
+use crate::renderer::layer::{Drawable, Layer, Vertex};
 use crate::renderer::pipeline::PipelineType;
 use crate::renderer::text::TextRenderer;
 
@@ -34,11 +34,9 @@ pub struct Renderer<'a> {
     loaded_pools: Vec<NvTexturePool>,
     bind_group_layouts: Vec<BindGroupLayout>,
     pipelines: HashMap<PipelineType, wgpu::RenderPipeline>,
+    layers: Vec<Layer>,
 
     rng: rand::rngs::ThreadRng,
-
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
 
     pub adapter_info: AdapterInfo,
 
@@ -55,34 +53,6 @@ struct FrameContext {
     view: wgpu::TextureView,
     encoder: wgpu::CommandEncoder,
 }
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct Vertex {
-    position: [f32; 3],
-    uv: [f32; 2],
-}
-
-const VERTICES: &[Vertex] = &[
-    Vertex {
-        position: [-0.5, 0.0, 0.0],
-        uv: [0.0, 0.0],
-    },
-    Vertex {
-        position: [-0.5, -0.5, 0.0],
-        uv: [0.0, 1.0],
-    },
-    Vertex {
-        position: [0.5, -0.5, 0.0],
-        uv: [1.0, 1.0],
-    },
-    Vertex {
-        position: [0.5, 0.5, 0.0],
-        uv: [1.0, 0.0],
-    },
-];
-
-const INDICES: &[u16] = &[0, 1, 2, 0, 2, 3];
 
 impl<'a> Renderer<'a> {
     pub fn new(window: Arc<Window>) -> Self {
@@ -155,28 +125,6 @@ impl<'a> Renderer<'a> {
             }),
         );
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: unsafe {
-                std::slice::from_raw_parts(
-                    VERTICES.as_ptr() as *const u8,
-                    std::mem::size_of_val(VERTICES),
-                )
-            },
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: unsafe {
-                std::slice::from_raw_parts(
-                    INDICES.as_ptr() as *const u8,
-                    std::mem::size_of_val(INDICES),
-                )
-            },
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
         let scale_factor = window.clone().scale_factor() as f32;
 
         let mut renderer = Renderer {
@@ -188,9 +136,8 @@ impl<'a> Renderer<'a> {
             loaded_pools: Vec::new(),
             bind_group_layouts: bind_layouts,
             pipelines: HashMap::new(),
+            layers: Vec::new(),
 
-            vertex_buffer,
-            index_buffer,
             rng: rand::rng(),
 
             adapter_info: adapter.get_info(),
@@ -238,6 +185,34 @@ impl<'a> Renderer<'a> {
 
         info!("renderer created");
         renderer
+    }
+
+    pub fn insert_layer(
+        &mut self,
+        instances: Vec<Box<dyn Drawable>>,
+        texture_pool: usize,
+        zindex: u32,
+    ) -> usize {
+        let bind_group = self
+            .loaded_pools
+            .get(texture_pool)
+            .and_then(|p| {
+                
+            })
+            .expect("texture pool has no bind group");
+
+        let layer = Layer::new(instances, &self.device, bind_group, zindex);
+
+        let id = self.layers.len();
+        self.layers.push(layer);
+        self.layers.sort_by_key(|l| l.zindex);
+
+        id
+    }
+
+    pub fn remove_layer(&mut self, id: usize) {
+        self.layers.remove(id);
+        self.layers.sort_by_key(|l| l.zindex);
     }
 
     pub fn insert_pool(&mut self, pool: &mut AssetPool) -> usize {
@@ -310,7 +285,7 @@ impl<'a> Renderer<'a> {
         let mut context = self.begin_frame()?;
         let dt_seconds = self.delta_time.as_secs_f32();
 
-        self.render_image(&mut context);
+        self.render_2d_layers(&mut context);
         self.display_text(&mut context, dt_seconds);
         self.display_imgui(&mut context, dt_seconds);
 
@@ -354,61 +329,16 @@ impl<'a> Renderer<'a> {
         Some(id)
     }
 
-    fn render_image(&mut self, context: &mut FrameContext) {
+    fn render_2d_layers(&mut self, context: &mut FrameContext) {
         let pipeline = match self.pipelines.get(&PipelineType::Basic2D) {
             Some(pipeline) => pipeline,
             None => {
-                error!("No render pipeline");
+                error!("No 2d render pipeline");
                 return;
             }
         };
 
-        let pool = match self.loaded_pools.get(0) {
-            Some(pool) => pool,
-            None => {
-                error!("No texture pool");
-                return;
-            }
-        };
-
-        let texture = match pool
-            .textures
-            .get(self.rng.random_range(0..pool.textures.len()))
-        {
-            Some(texture) => texture,
-            None => {
-                error!("No texture");
-                return;
-            }
-        };
-
-        let mut pass = context
-            .encoder
-            .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Image Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &context.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &texture.bind_group, &[]);
-        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        pass.draw_indexed(0..6, 0, 0..1);
+        self.layers.iter().for_each(|l| l.draw(context, pipeline));
     }
 
     fn display_text(&mut self, context: &mut FrameContext, _dt_seconds: f32) {
