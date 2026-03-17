@@ -13,6 +13,7 @@ pub struct NvTexture {
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
     pub bind_group: wgpu::BindGroup,
+    pub name: String,
 }
 
 impl NvTexture {
@@ -25,7 +26,7 @@ impl NvTexture {
         let file = format!("assets/{}", texture_name);
         debug!("loading texture at {}", file);
 
-        let image = image::open(file).unwrap();
+        let image = image::open(file.clone()).unwrap();
         let rgba = image.to_rgba8();
         let dimensions = image.dimensions();
 
@@ -87,6 +88,7 @@ impl NvTexture {
             view,
             sampler,
             bind_group,
+            name: file,
         }
     }
 }

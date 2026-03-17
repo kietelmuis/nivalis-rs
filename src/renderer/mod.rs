@@ -187,21 +187,8 @@ impl<'a> Renderer<'a> {
         renderer
     }
 
-    pub fn insert_layer(
-        &mut self,
-        instances: Vec<Box<dyn Drawable>>,
-        texture_pool: usize,
-        zindex: u32,
-    ) -> usize {
-        let bind_group = self
-            .loaded_pools
-            .get(texture_pool)
-            .and_then(|p| {
-                
-            })
-            .expect("texture pool has no bind group");
-
-        let layer = Layer::new(instances, &self.device, bind_group, zindex);
+    pub fn insert_layer(&mut self, instances: Vec<Box<dyn Drawable>>, zindex: u32) -> usize {
+        let layer = Layer::new(instances, &self.device, zindex);
 
         let id = self.layers.len();
         self.layers.push(layer);

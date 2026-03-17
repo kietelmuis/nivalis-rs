@@ -1,4 +1,6 @@
-use wgpu::{BindGroup, Device, RenderPipeline, util::DeviceExt, wgc::validation::BindingError};
+use std::collections::HashMap;
+
+use wgpu::{BindGroup, Device, RenderPipeline, util::DeviceExt};
 
 use crate::{assets::NvTexture, renderer::FrameContext};
 
@@ -41,18 +43,22 @@ impl Transform {
     }
 }
 
-pub struct TexuredEntity {
+pub struct TexturedEntity {
     transform: Transform,
     texture: NvTexture,
 }
 
-impl Drawable for TexuredEntity {
+impl Drawable for TexturedEntity {
     fn indices(&self) -> [u16; 6] {
         [0, 1, 2, 0, 2, 3]
     }
 
     fn vertices(&self) -> [Vertex; 4] {
         self.transform.calculate_vertices()
+    }
+
+    fn texture(&self) -> &NvTexture {
+        &self.texture
     }
 }
 
@@ -62,21 +68,21 @@ pub trait Drawable {
     fn texture(&self) -> &NvTexture;
 }
 
+struct Batch {
+    bind_group: BindGroup,
+    batch_indices: Vec<u16>,
+}
+
 pub(super) struct Layer {
     pub zindex: u32,
-    bind_group: BindGroup,
+    batches: HashMap<String, Vec<Batch>>,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
 }
 
 impl Layer {
-    pub fn new(
-        instances: Vec<Box<dyn Drawable>>,
-        device: &Device,
-        bind_group: BindGroup,
-        zindex: u32,
-    ) -> Self {
+    pub fn new(instances: Vec<Box<dyn Drawable>>, device: &Device, zindex: u32) -> Self {
         let indices = instances
             .iter()
             .flat_map(|i| i.indices())
@@ -85,6 +91,17 @@ impl Layer {
             .iter()
             .flat_map(|i| i.vertices())
             .collect::<Vec<Vertex>>();
+
+        let mut batches: HashMap<String, Vec<Batch>> = HashMap::new();
+        for instance in instances {
+            batches
+                .entry(instance.texture().name.clone())
+                .or_default()
+                .push(Batch {
+                    bind_group: instance.texture().bind_group.clone(),
+                    batch_indices: instance.indices().to_vec(),
+                });
+        }
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Drawable Vertex Buffer"),
@@ -109,11 +126,10 @@ impl Layer {
         });
 
         Self {
-            instances,
             vertex_buffer,
             index_buffer,
-            bind_group,
             zindex,
+            batches,
             index_count: indices.len() as u32,
         }
     }
@@ -137,9 +153,14 @@ impl Layer {
             });
 
         rpass.set_pipeline(pipeline);
-        rpass.set_bind_group(0, &self.bind_group, &[]);
         rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        rpass.draw_indexed(0..self.index_count, 0, 0..1);
+
+        for (_texture_name, batch_vec) in &self.batches {
+            for batch in batch_vec {
+                rpass.set_bind_group(0, &batch.bind_group, &[]);
+                rpass.draw_indexed(0..batch.batch_indices.len() as u32, 0, 0..1);
+            }
+        }
     }
 }
